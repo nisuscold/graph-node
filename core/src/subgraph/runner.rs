@@ -331,7 +331,7 @@ where
                             };
                         }
 
-                        if needs_restart {
+                        if needs_restart && self.inputs.restart_on_dynamic_data_source {
                             // Cancel the stream for real
                             self.ctx
                                 .state

@@ -19,4 +19,5 @@ pub struct IndexingInputs<C: Blockchain> {
     pub chain: Arc<C>,
     pub templates: Arc<Vec<C::DataSourceTemplate>>,
     pub unified_api_version: UnifiedMappingApiVersion,
+    pub restart_on_dynamic_data_source: bool,
 }

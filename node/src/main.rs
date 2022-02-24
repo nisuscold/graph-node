@@ -320,6 +320,10 @@ async fn main() {
             );
             graph::spawn_blocking(job_runner.start());
         }
+        let restart_on_dynamic_data_source =
+            !env::var_os("EXPERIMENTAL_DISABLE_RESTART_ON_DYNAMIC_DS")
+                .map(|_| true)
+                .unwrap_or(false);
 
         let subgraph_instance_manager = SubgraphInstanceManager::new(
             &logger_factory,
@@ -327,6 +331,7 @@ async fn main() {
             blockchain_map.cheap_clone(),
             metrics_registry.clone(),
             link_resolver.cheap_clone(),
+            restart_on_dynamic_data_source,
         );
 
         // Create IPFS-based subgraph provider

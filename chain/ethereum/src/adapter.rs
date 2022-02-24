@@ -22,6 +22,7 @@ use graph::{
 
 use crate::capabilities::NodeCapabilities;
 use crate::data_source::BlockHandlerFilter;
+use crate::Mapping;
 use crate::{data_source::DataSource, Chain};
 
 pub type EventSignature = H256;
@@ -143,6 +144,18 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
             traces: self.requires_traces(),
         }
     }
+
+    fn extend_with_template(
+        &mut self,
+        data_sources: impl Iterator<Item = <Chain as bc::Blockchain>::DataSourceTemplate>,
+    ) {
+        for data_source in data_sources.into_iter() {
+            self.log
+                .extend(EthereumLogFilter::from_mapping(&data_source.mapping));
+            self.call
+                .extend(EthereumCallFilter::from_mapping(&data_source.mapping));
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -197,6 +210,16 @@ impl EthereumLogFilter {
                 }
             }
         }
+        this
+    }
+
+    pub fn from_mapping(iter: &Mapping) -> Self {
+        let mut this = EthereumLogFilter::default();
+
+        for sig in iter.event_handlers.iter().map(|e| e.topic0()) {
+            this.wildcard_events.insert(sig);
+        }
+
         this
     }
 
@@ -292,6 +315,8 @@ pub(crate) struct EthereumCallFilter {
     // start_block and the set of function signatures
     pub contract_addresses_function_signatures:
         HashMap<Address, (BlockNumber, HashSet<FunctionSelector>)>,
+
+    pub wildcard_matches: HashSet<FunctionSelector>,
 }
 
 impl EthereumCallFilter {
@@ -305,34 +330,62 @@ impl EthereumCallFilter {
 
         // Ensure the call is to a contract the filter expressed an interest in
         let signature = match self.contract_addresses_function_signatures.get(&call.to) {
-            None => return false,
-            Some(v) => &v.1,
+            // If the call is to a contract with no specified functions, keep the call
+            //
+            // Allows the ability to genericly match on all calls to a contract.
+            // Caveat is this catch all clause limits you from matching with a specific call
+            // on the same address
+            Some(v) if v.1.is_empty() => return true,
+            // There are some relevant signatures to test
+            Some(v) => Some(&v.1),
+            // There are no signatures and no wildcards
+            None if self.wildcard_matches.is_empty() => return false,
+            // There are no signatures but there are wildcards.
+            None => None,
         };
 
-        // If the call is to a contract with no specified functions, keep the call
-        //
-        // Allows the ability to genericly match on all calls to a contract.
-        // Caveat is this catch all clause limits you from matching with a specific call
-        // on the same address
-        if signature.is_empty() {
-            true
-        } else {
-            // Ensure the call is to run a function the filter expressed an interest in
-            let correct_fn = signature.contains(&call.input.0[..4]);
-            // Make sure the call input size is multiple of 32, otherwise we can't decode it.
-            // This is due to the Ethereum ABI spec: https://docs.soliditylang.org/en/v0.8.11/abi-spec.html
-            //
-            // A scenario where the input could have the wrong size is when a `delegatecall` is
-            // "disguised" as a `call`. For example for this couple of transactions/calls:
-            // 1. https://etherscan.io/tx/0x8e992eeb40e18703dd8169a8031e2113311985f1c20e0723a2dc362df40bafb0
-            // 2. https://etherscan.io/tx/0x7c391bcfa2007f84e123ad47ea72e2d6ffb2fbab81deff0990b0c499e0664a92
-            //
-            // The first one is acting as a proxy to the second one (an atomicMatch_).
-            // If you try to decode the first call as it is/comes from a `traces` RPC request, it
-            // will fail because it has a smaller size/length.
-            let correct_input_size = (call.input.0.len() - 4) % 32 == 0;
+        let call_signature = &call.input.0[..4];
 
-            correct_fn && correct_input_size
+        // Ensure the call is to run a function the filter expressed an interest in
+        let correct_fn = match signature {
+            // this avoids having to call extend for every match call, checks the contract specific funtions, then falls
+            // back on wildcards
+            Some(sig) => {
+                sig.contains(call_signature) || self.wildcard_matches.contains(call_signature)
+            }
+            // no contract specific functions, check wildcards
+            None => self.wildcard_matches.contains(call_signature),
+        };
+
+        // Make sure the call input size is multiple of 32, otherwise we can't decode it.
+        // This is due to the Ethereum ABI spec: https://docs.soliditylang.org/en/v0.8.11/abi-spec.html
+        //
+        // A scenario where the input could have the wrong size is when a `delegatecall` is
+        // "disguised" as a `call`. For example for this couple of transactions/calls:
+        // 1. https://etherscan.io/tx/0x8e992eeb40e18703dd8169a8031e2113311985f1c20e0723a2dc362df40bafb0
+        // 2. https://etherscan.io/tx/0x7c391bcfa2007f84e123ad47ea72e2d6ffb2fbab81deff0990b0c499e0664a92
+        //
+        // The first one is acting as a proxy to the second one (an atomicMatch_).
+        // If you try to decode the first call as it is/comes from a `traces` RPC request, it
+        // will fail because it has a smaller size/length.
+        let correct_input_size = (call.input.0.len() - 4) % 32 == 0;
+
+        correct_fn && correct_input_size
+    }
+
+    pub fn from_mapping(mapping: &Mapping) -> Self {
+        let functions = mapping
+            .call_handlers
+            .iter()
+            .map(move |call_handler| {
+                let sig = keccak256(call_handler.function.as_bytes());
+                [sig[0], sig[1], sig[2], sig[3]]
+            })
+            .collect();
+
+        Self {
+            wildcard_matches: functions,
+            ..Default::default()
         }
     }
 
@@ -382,8 +435,9 @@ impl EthereumCallFilter {
         // Destructure to make sure we're checking all fields.
         let EthereumCallFilter {
             contract_addresses_function_signatures,
+            wildcard_matches,
         } = self;
-        contract_addresses_function_signatures.is_empty()
+        contract_addresses_function_signatures.is_empty() && wildcard_matches.is_empty()
     }
 }
 
@@ -408,6 +462,7 @@ impl FromIterator<(BlockNumber, Address, FunctionSelector)> for EthereumCallFilt
             });
         EthereumCallFilter {
             contract_addresses_function_signatures: lookup,
+            ..Default::default()
         }
     }
 }
@@ -422,6 +477,7 @@ impl From<&EthereumBlockFilter> for EthereumCallFilter {
                     (address.clone(), (*start_block_opt, HashSet::default()))
                 })
                 .collect::<HashMap<Address, (BlockNumber, HashSet<FunctionSelector>)>>(),
+            ..Default::default()
         }
     }
 }
@@ -711,6 +767,7 @@ mod tests {
                 (address(1), (1, HashSet::from_iter(vec![[1u8; 4]]))),
                 (address(2), (2, HashSet::new())),
             ]),
+            ..Default::default()
         };
 
         assert_eq!(
@@ -757,6 +814,7 @@ mod tests {
                     (1, HashSet::from_iter(vec![[1u8; 4]])),
                 ),
             ]),
+            ..Default::default()
         };
         let extension = EthereumCallFilter {
             contract_addresses_function_signatures: HashMap::from_iter(vec![
@@ -769,6 +827,7 @@ mod tests {
                     (3, HashSet::from_iter(vec![[3u8; 4]])),
                 ),
             ]),
+            ..Default::default()
         };
         base.extend(extension);
 
