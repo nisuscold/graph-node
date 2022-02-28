@@ -3,6 +3,7 @@ use ethabi::{Error as ABIError, Function, ParamType, Token};
 use futures::Future;
 use graph::blockchain::ChainIdentifier;
 use graph::env::env_var;
+use itertools::Itertools;
 use mockall::automock;
 use mockall::predicate::*;
 use std::cmp;
@@ -159,6 +160,13 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
             self.block
                 .extend(EthereumBlockFilter::from_mapping(&data_source.mapping));
         }
+    
+        fn to_firehose_filter(self) -> Box<dyn prost::Message> {
+        let msg = MultiLogFilter {
+            basic_log_filters: self.log.into(),
+        };
+
+        Box::new(msg)
     }
 }
 
@@ -171,6 +179,23 @@ pub(crate) struct EthereumLogFilter {
 
     // Event sigs with no associated address, matching on all addresses.
     wildcard_events: HashSet<EventSignature>,
+}
+
+impl Into<Vec<BasicLogFilter>> for EthereumLogFilter {
+    fn into(self) -> Vec<BasicLogFilter> {
+        self.contracts_and_events_graph
+            .all_edges()
+            .flat_map(|edge| match edge {
+                (LogFilterNode::Contract(addr), LogFilterNode::Event(sig), _) => {
+                    Some(BasicLogFilter {
+                        addresses: vec![addr.as_bytes().to_owned()],
+                        event_signatures: vec![sig.as_bytes().to_owned()],
+                    })
+                }
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl EthereumLogFilter {
@@ -491,6 +516,19 @@ impl From<&EthereumBlockFilter> for EthereumCallFilter {
 pub(crate) struct EthereumBlockFilter {
     pub contract_addresses: HashSet<(BlockNumber, Address)>,
     pub trigger_every_block: bool,
+}
+
+impl Into<Vec<BasicLogFilter>> for EthereumBlockFilter {
+    fn into(self) -> Vec<BasicLogFilter> {
+        self.contract_addresses
+            .iter()
+            .dedup_by(|x, y| x.1 == y.1)
+            .map(|x| BasicLogFilter {
+                addresses: vec![x.1.as_bytes().to_vec()],
+                event_signatures: vec![],
+            })
+            .collect_vec()
+    }
 }
 
 impl EthereumBlockFilter {
