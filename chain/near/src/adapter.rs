@@ -18,14 +18,14 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
         NodeCapabilities {}
     }
 
-<<<<<<< Updated upstream
     fn extend_with_template(
         &mut self,
         _data_source: impl Iterator<Item = <Chain as bc::Blockchain>::DataSourceTemplate>,
     ) {
-=======
+        todo!()
+    }
+
     fn to_firehose_filter(self) -> Box<dyn prost::Message> {
->>>>>>> Stashed changes
         todo!()
     }
 }

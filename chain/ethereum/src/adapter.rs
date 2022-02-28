@@ -3,6 +3,8 @@ use ethabi::{Error as ABIError, Function, ParamType, Token};
 use futures::Future;
 use graph::blockchain::ChainIdentifier;
 use graph::env::env_var;
+use graph::firehose::BasicLogFilter;
+use graph::firehose::MultiLogFilter;
 use itertools::Itertools;
 use mockall::automock;
 use mockall::predicate::*;
@@ -160,8 +162,9 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
             self.block
                 .extend(EthereumBlockFilter::from_mapping(&data_source.mapping));
         }
-    
-        fn to_firehose_filter(self) -> Box<dyn prost::Message> {
+    }
+
+    fn to_firehose_filter(self) -> Box<dyn prost::Message> {
         let msg = MultiLogFilter {
             basic_log_filters: self.log.into(),
         };
