@@ -98,13 +98,12 @@ impl BlockIngestor {
     }
 
     async fn do_poll(&self) -> Result<(), IngestorError> {
-        trace!(self.logger, "BlockIngestor::do_poll");
 
         // Get chain head ptr from store
         let head_block_ptr_opt = self.chain_store.chain_head_ptr()?;
 
         // To check if there is a new block or not, fetch only the block header since that's cheaper
-        // than the full block. This is worthwhile because most of the time there won't be a new
+        // than the full block. This is worthwhile because moscct of the time there won't be a new
         // block, as we expect the poll interval to be much shorter than the block time.
         let latest_block = self.latest_block().await?;
 

@@ -221,6 +221,7 @@ async fn main() {
         let subscription_manager = store_builder.subscription_manager();
         let chain_head_update_listener = store_builder.chain_head_update_listener();
         let primary_pool = store_builder.primary_pool();
+        let sqs_client = store_builder.sqs_client();
 
         // To support the ethereum block ingestor, ethereum networks are referenced both by the
         // `blockchain_map` and `ethereum_chains`. Future chains should be referred to only in
@@ -327,6 +328,7 @@ async fn main() {
             blockchain_map.cheap_clone(),
             metrics_registry.clone(),
             link_resolver.cheap_clone(),
+            sqs_client.clone(),
         );
 
         // Create IPFS-based subgraph provider

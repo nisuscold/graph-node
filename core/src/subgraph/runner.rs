@@ -538,6 +538,7 @@ where
         // This is necessary to re-create the block stream.
         let needs_restart = block_state.has_created_data_sources();
         let host_metrics = self.ctx.host_metrics.clone();
+        let sqs_client = self.ctx.state.sqs_client.clone();
 
         // This loop will:
         // 1. Instantiate created data sources.
@@ -700,6 +701,30 @@ where
         } = block_state;
 
         let first_error = deterministic_errors.first().cloned();
+
+        //Sending events to the queue
+        let mut messages_sent = 0;
+        let mut messages_failed = 0;
+        for modification in &mods {
+            let mut entity = modification.get_entity();
+            let entity_key = modification.entity_key().clone();
+            entity.insert(String::from("entity_id"), Value::from(entity_key.entity_id));
+            let json_entity = serde_json::to_string(&entity).unwrap();
+            let rsp = &sqs_client
+                .send_message()
+                .queue_url("polysynth-test") // This is to read from the graph indices itself
+                .message_body(&json_entity)
+                .send().await;
+            match rsp {
+                Ok(_) => {
+                    messages_sent += 1;
+                }
+                _ => {
+                    messages_failed += 1;
+                }
+            }
+        }
+        println!("[PolySynth] #Total Success : {}, Failed: {}", messages_sent, messages_failed);
 
         match store.transact_block_operations(
             block_ptr,

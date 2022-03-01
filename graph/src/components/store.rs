@@ -1367,6 +1367,14 @@ impl EntityModification {
             _ => false,
         }
     }
+
+    pub fn get_entity(&self) -> Entity {
+        use EntityModification::*;
+        match self {
+            Insert { data, .. } | Overwrite {data, .. } => data.clone(),
+            _ => Entity::new()
+        }
+    }
 }
 
 /// A representation of entity operations that can be accumulated.

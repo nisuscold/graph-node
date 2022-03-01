@@ -17,8 +17,9 @@ services:
       postgres_pass: let-me-in
       postgres_db: graph-node
       ipfs: 'ipfs:5001'
-      ethereum: 'mainnet:http://host.docker.internal:8545'
-      GRAPH_LOG: info
+      ethereum: 'mumbai:https://rpc-mumbai.maticvigil.com'
+      GRAPH_LOG: trace
+      DISABLE_BLOCK_INGESTOR: false
   ipfs:
     image: ipfs/go-ipfs:v0.4.23
     ports:

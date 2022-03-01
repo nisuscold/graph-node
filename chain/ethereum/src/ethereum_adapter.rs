@@ -1090,7 +1090,6 @@ impl EthereumAdapterTrait for EthereumAdapter {
         // The early return is necessary for correctness, otherwise we'll
         // request an empty batch which is not valid in JSON-RPC.
         if block.transactions.is_empty() {
-            trace!(logger, "Block {} contains no transactions", block_hash);
             return Box::pin(std::future::ready(Ok(EthereumBlock {
                 block: Arc::new(block),
                 transaction_receipts: Vec::new(),

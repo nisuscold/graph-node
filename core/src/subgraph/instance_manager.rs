@@ -22,6 +22,7 @@ pub struct SubgraphInstanceManager<S, M, L> {
     manager_metrics: SubgraphInstanceManagerMetrics,
     instances: SharedInstanceKeepAliveMap,
     link_resolver: Arc<L>,
+    sqs_client: aws_sdk_sqs::Client,
 }
 
 #[async_trait]
@@ -40,13 +41,14 @@ where
         let logger = self.logger_factory.subgraph_logger(&loc);
         let err_logger = logger.clone();
         let instance_manager = self.cheap_clone();
+        let sqs_client = self.sqs_client.clone();
 
         let subgraph_start_future = async move {
             match BlockchainKind::from_manifest(&manifest)? {
                 BlockchainKind::Ethereum => {
                     instance_manager
                         .start_subgraph_inner::<graph_chain_ethereum::Chain>(
-                            logger, loc, manifest, stop_block,
+                            logger, loc, manifest, stop_block, sqs_client
                         )
                         .await
                 }
@@ -54,7 +56,7 @@ where
                 BlockchainKind::Near => {
                     instance_manager
                         .start_subgraph_inner::<graph_chain_near::Chain>(
-                            logger, loc, manifest, stop_block,
+                            logger, loc, manifest, stop_block, sqs_client
                         )
                         .await
                 }
@@ -102,6 +104,7 @@ where
         chains: Arc<BlockchainMap>,
         metrics_registry: Arc<M>,
         link_resolver: Arc<L>,
+        sqs_client: aws_sdk_sqs::Client,
     ) -> Self {
         let logger = logger_factory.component_logger("SubgraphInstanceManager", None);
         let logger_factory = logger_factory.with_parent(logger.clone());
@@ -114,6 +117,7 @@ where
             metrics_registry,
             instances: SharedInstanceKeepAliveMap::default(),
             link_resolver,
+            sqs_client
         }
     }
 
@@ -123,6 +127,7 @@ where
         deployment: DeploymentLocator,
         manifest: serde_yaml::Mapping,
         stop_block: Option<BlockNumber>,
+        sqs_client: aws_sdk_sqs::Client,
     ) -> Result<(), Error> {
         let subgraph_store = self.subgraph_store.cheap_clone();
         let registry = self.metrics_registry.cheap_clone();
@@ -277,6 +282,7 @@ where
                 instances: self.instances.cheap_clone(),
                 filter,
                 entity_lfu_cache: LfuCache::new(),
+                sqs_client: sqs_client.clone()
             },
             subgraph_metrics,
             host_metrics,

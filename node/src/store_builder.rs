@@ -18,6 +18,10 @@ use graph_store_postgres::{
 
 use crate::config::{Config, Shard};
 
+// Add information for sending information to SQS client
+use aws_config::meta::region::RegionProviderChain;
+use aws_sdk_sqs::{Client, Error, Region, PKG_VERSION};
+
 pub struct StoreBuilder {
     logger: Logger,
     subgraph_store: Arc<SubgraphStore>,
@@ -26,6 +30,7 @@ pub struct StoreBuilder {
     chain_head_update_listener: Arc<PostgresChainHeadUpdateListener>,
     /// Map network names to the shards where they are/should be stored
     chains: HashMap<String, ShardName>,
+    sqs_client: aws_sdk_sqs::Client,
 }
 
 impl StoreBuilder {
@@ -73,6 +78,11 @@ impl StoreBuilder {
             primary_shard.connection.to_owned(),
         ));
 
+        let region_provider = RegionProviderChain::default_provider()
+            .or_else(Region::new("ap-southeast-1"));
+        let shared_config = aws_config::from_env().region(region_provider).load().await;
+        let sqs_client: aws_sdk_sqs::Client = aws_sdk_sqs::Client::new(&shared_config);
+
         Self {
             logger: logger.cheap_clone(),
             subgraph_store: store,
@@ -80,6 +90,7 @@ impl StoreBuilder {
             subscription_manager,
             chain_head_update_listener,
             chains,
+            sqs_client
         }
     }
 
@@ -287,5 +298,9 @@ impl StoreBuilder {
 
     pub fn primary_pool(&self) -> ConnectionPool {
         self.pools.get(&*PRIMARY_SHARD).unwrap().clone()
+    }
+
+    pub fn sqs_client(&self) -> aws_sdk_sqs::Client {
+        self.sqs_client.clone()
     }
 }

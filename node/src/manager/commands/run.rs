@@ -89,6 +89,7 @@ pub async fn run(
     let chain_head_update_listener = store_builder.chain_head_update_listener();
     let primary_pool = store_builder.primary_pool();
     let network_identifiers = ethereum_idents.into_iter().collect();
+    let sqs_client = store_builder.sqs_client();
     let network_store = store_builder.network_store(network_identifiers);
 
     let subgraph_store = network_store.subgraph_store();
@@ -116,12 +117,14 @@ pub async fn run(
     blockchain_map.insert(network_name.clone(), Arc::new(chain));
 
     let blockchain_map = Arc::new(blockchain_map);
+
     let subgraph_instance_manager = SubgraphInstanceManager::new(
         &logger_factory,
         subgraph_store.clone(),
         blockchain_map.clone(),
         metrics_registry.clone(),
         link_resolver.cheap_clone(),
+        sqs_client.clone(),
     );
 
     // Create IPFS-based subgraph provider

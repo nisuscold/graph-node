@@ -17,6 +17,7 @@ pub struct IndexingState<T: RuntimeHostBuilder<C>, C: Blockchain> {
     pub instances: SharedInstanceKeepAliveMap,
     pub filter: C::TriggerFilter,
     pub entity_lfu_cache: LfuCache<EntityKey, Option<Entity>>,
+    pub sqs_client: aws_sdk_sqs::Client,
 }
 
 pub struct IndexingContext<T: RuntimeHostBuilder<C>, C: Blockchain> {
