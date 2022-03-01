@@ -152,8 +152,12 @@ impl bc::TriggerFilter<Chain> for TriggerFilter {
         for data_source in data_sources.into_iter() {
             self.log
                 .extend(EthereumLogFilter::from_mapping(&data_source.mapping));
+
             self.call
                 .extend(EthereumCallFilter::from_mapping(&data_source.mapping));
+
+            self.block
+                .extend(EthereumBlockFilter::from_mapping(&data_source.mapping));
         }
     }
 }
@@ -225,6 +229,10 @@ impl EthereumLogFilter {
 
     /// Extends this log filter with another one.
     pub fn extend(&mut self, other: EthereumLogFilter) {
+        if other.is_empty() {
+            return;
+        };
+
         // Destructure to make sure we're checking all fields.
         let EthereumLogFilter {
             contracts_and_events_graph,
@@ -328,35 +336,6 @@ impl EthereumCallFilter {
             return false;
         }
 
-        // Ensure the call is to a contract the filter expressed an interest in
-        let signature = match self.contract_addresses_function_signatures.get(&call.to) {
-            // If the call is to a contract with no specified functions, keep the call
-            //
-            // Allows the ability to genericly match on all calls to a contract.
-            // Caveat is this catch all clause limits you from matching with a specific call
-            // on the same address
-            Some(v) if v.1.is_empty() => return true,
-            // There are some relevant signatures to test
-            Some(v) => Some(&v.1),
-            // There are no signatures and no wildcards
-            None if self.wildcard_matches.is_empty() => return false,
-            // There are no signatures but there are wildcards.
-            None => None,
-        };
-
-        let call_signature = &call.input.0[..4];
-
-        // Ensure the call is to run a function the filter expressed an interest in
-        let correct_fn = match signature {
-            // this avoids having to call extend for every match call, checks the contract specific funtions, then falls
-            // back on wildcards
-            Some(sig) => {
-                sig.contains(call_signature) || self.wildcard_matches.contains(call_signature)
-            }
-            // no contract specific functions, check wildcards
-            None => self.wildcard_matches.contains(call_signature),
-        };
-
         // Make sure the call input size is multiple of 32, otherwise we can't decode it.
         // This is due to the Ethereum ABI spec: https://docs.soliditylang.org/en/v0.8.11/abi-spec.html
         //
@@ -369,8 +348,30 @@ impl EthereumCallFilter {
         // If you try to decode the first call as it is/comes from a `traces` RPC request, it
         // will fail because it has a smaller size/length.
         let correct_input_size = (call.input.0.len() - 4) % 32 == 0;
+        if !correct_input_size {
+            return false;
+        }
 
-        correct_fn && correct_input_size
+        let call_signature = &call.input.0[..4];
+
+        // Ensure the call is to a contract the filter expressed an interest in
+        match self.contract_addresses_function_signatures.get(&call.to) {
+            // If the call is to a contract with no specified functions, keep the call
+            //
+            // Allows the ability to genericly match on all calls to a contract.
+            // Caveat is this catch all clause limits you from matching with a specific call
+            // on the same address
+            Some(v) if v.1.is_empty() => true,
+            // There are some relevant signatures to test
+            // this avoids having to call extend for every match call, checks the contract specific funtions, then falls
+            // back on wildcards
+            Some(v) => {
+                let sig = &v.1;
+                sig.contains(call_signature) || self.wildcard_matches.contains(call_signature)
+            }
+            // no contract specific functions, check wildcards
+            None => self.wildcard_matches.contains(call_signature),
+        }
     }
 
     pub fn from_mapping(mapping: &Mapping) -> Self {
@@ -385,7 +386,7 @@ impl EthereumCallFilter {
 
         Self {
             wildcard_matches: functions,
-            ..Default::default()
+            contract_addresses_function_signatures: HashMap::new(),
         }
     }
 
@@ -409,6 +410,10 @@ impl EthereumCallFilter {
 
     /// Extends this call filter with another one.
     pub fn extend(&mut self, other: EthereumCallFilter) {
+        if other.is_empty() {
+            return;
+        };
+
         // Extend existing address / function signature key pairs
         // Add new address / function signature key pairs from the provided EthereumCallFilter
         for (address, (proposed_start_block, new_sigs)) in
@@ -462,7 +467,7 @@ impl FromIterator<(BlockNumber, Address, FunctionSelector)> for EthereumCallFilt
             });
         EthereumCallFilter {
             contract_addresses_function_signatures: lookup,
-            ..Default::default()
+            wildcard_matches: HashSet::new(),
         }
     }
 }
@@ -477,7 +482,7 @@ impl From<&EthereumBlockFilter> for EthereumCallFilter {
                     (address.clone(), (*start_block_opt, HashSet::default()))
                 })
                 .collect::<HashMap<Address, (BlockNumber, HashSet<FunctionSelector>)>>(),
-            ..Default::default()
+            wildcard_matches: HashSet::new(),
         }
     }
 }
@@ -489,6 +494,17 @@ pub(crate) struct EthereumBlockFilter {
 }
 
 impl EthereumBlockFilter {
+    /// from_mapping ignores contract addresses in this use case because templates can't provide Address or BlockNumber
+    /// ahead of time. This means the filters applied to the block_stream need to be broad, in this case,
+    /// specifically, will match all blocks. The blocks are then further filtered by the subgraph instance manager
+    /// which keeps track of deployed contracts and relevant addresses.
+    pub fn from_mapping(mapping: &Mapping) -> Self {
+        Self {
+            contract_addresses: HashSet::new(),
+            trigger_every_block: mapping.block_handlers.len() != 0,
+        }
+    }
+
     pub fn from_data_sources<'a>(iter: impl IntoIterator<Item = &'a DataSource>) -> Self {
         iter.into_iter()
             .filter(|data_source| data_source.source.address.is_some())
@@ -528,6 +544,10 @@ impl EthereumBlockFilter {
     }
 
     pub fn extend(&mut self, other: EthereumBlockFilter) {
+        if other.is_empty() {
+            return;
+        };
+
         self.trigger_every_block = self.trigger_every_block || other.trigger_every_block;
         self.contract_addresses = self.contract_addresses.iter().cloned().fold(
             HashSet::new(),
@@ -767,7 +787,7 @@ mod tests {
                 (address(1), (1, HashSet::from_iter(vec![[1u8; 4]]))),
                 (address(2), (2, HashSet::new())),
             ]),
-            ..Default::default()
+            wildcard_matches: HashSet::new(),
         };
 
         assert_eq!(
@@ -814,7 +834,7 @@ mod tests {
                     (1, HashSet::from_iter(vec![[1u8; 4]])),
                 ),
             ]),
-            ..Default::default()
+            wildcard_matches: HashSet::new(),
         };
         let extension = EthereumCallFilter {
             contract_addresses_function_signatures: HashMap::from_iter(vec![
@@ -827,7 +847,7 @@ mod tests {
                     (3, HashSet::from_iter(vec![[3u8; 4]])),
                 ),
             ]),
-            ..Default::default()
+            wildcard_matches: HashSet::new(),
         };
         base.extend(extension);
 

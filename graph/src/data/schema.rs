@@ -847,8 +847,6 @@ impl Schema {
         &self,
         schemas: &HashMap<SchemaReference, Arc<Schema>>,
     ) -> Result<(), Vec<SchemaValidationError>> {
-        // Using this since std::array's .into_iter() doesn't work
-        // as expected (at least as of rustc 1.53)
         let mut errors: Vec<SchemaValidationError> = [
             self.validate_schema_types(),
             self.validate_derived_from(),
